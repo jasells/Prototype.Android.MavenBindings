@@ -66,20 +66,30 @@ namespace Prototype.Android.MavenBinding.Tasks
 			foreach (var task in tasks.OrEmpty ()) {
 
 				// See if JavaArtifact/JavaVersion overrides were used
-				if (TryParseJavaArtifactAndVersion ("PackageReference", task, log))
-					continue;
-
-				// Try parsing the NuGet metadata for Java version information instead
-				var artifact = finder?.GetJavaInformation (task.ItemSpec, task.GetMetadataOrDefault ("Version", string.Empty), log);
-
-				if (artifact != null) {
-					log.LogMessage ("Found Java dependency '{0}:{1}' version '{2}' from PackageReference '{3}'", artifact.GroupId, artifact.Id, artifact.Versions.FirstOrDefault (), task.ItemSpec);
-					artifacts.Add (artifact);
+				if (TryParseJavaArtifactAndVersion ("PackageReference", task, log)) {
+					log.LogMessage ("JavaArtifact / JavaVersion overrides were used", task.ItemSpec);
 
 					continue;
 				}
 
-				log.LogMessage ("No Java artifact information found for PackageReference '{0}'", task.ItemSpec);
+				log.LogMessage ($"======== finder is null: ({finder == null})");
+
+				// Try parsing the NuGet metadata for Java version information instead
+				var artifacts = finder?.GetJavaInformation (task.ItemSpec, task.GetMetadataOrDefault ("Version", string.Empty), log)
+						??
+						Enumerable.Empty<Artifact> ();
+
+				log.LogMessage ($"======== artifacts is null: ({artifacts == null})");
+				log.LogMessage ($"======== Found Java ({artifacts?.Count () ?? 0}) artifacts");
+
+				foreach (var artifact in artifacts!) {
+					log.LogMessage ("Found Java dependency '{0}:{1}' version '{2}' from PackageReference '{3}'", artifact.GroupId, artifact.Id, artifact.Versions.FirstOrDefault (), task.ItemSpec);
+					this.artifacts.Add (artifact);
+				}
+
+				if (!artifacts.Any ()) {
+					log.LogMessage ("No Java artifact information found for PackageReference '{0}'", task.ItemSpec);
+				}
 			}
 		}
 

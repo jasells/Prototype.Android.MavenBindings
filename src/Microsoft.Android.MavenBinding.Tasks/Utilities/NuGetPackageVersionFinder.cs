@@ -32,60 +32,81 @@ namespace Prototype.Android.MavenBinding.Tasks
 			}
 		}
 
-		public Artifact? GetJavaInformation (string library, string version, LogWrapper log)
+		/// <summary>
+		/// Scans the nuget package for native android library meta-data in the Tags field.
+		/// </summary>
+		/// <param name="library">The NuGet Package Name</param>
+		/// <param name="version">NuGet package version</param>
+		/// <param name="log"></param>
+		/// <returns></returns>
+		public IEnumerable<Artifact> GetJavaInformation (string library, string version, LogWrapper log)
 		{
+			log.LogMessage ($"===== entering {nameof(GetJavaInformation)}(library: {library}, version: {version}) =====");
 			// Check if we already have this one in the cache
 			var dictionary_key = $"{library.ToLowerInvariant ()}:{version}";
+			var artifacts = new List<Artifact> ();
 
 			if (cache.TryGetValue (dictionary_key, out var artifact))
-				return artifact;
+				return artifacts;
 
 			// Find the LockFileLibrary
 			var nuget = lock_file.GetLibrary (library, new NuGet.Versioning.NuGetVersion (version));
 
 			if (nuget is null) {
 				log.LogError ("Could not find NuGet package '{0}' version '{1}' in lock file. Ensure NuGet Restore has run since this <PackageReference> was added.", library, version);
-				return null;
+				return artifacts;
 			}
 
-			foreach (var path in lock_file.PackageFolders)
-				if (CheckFilePath (path.Path, nuget) is Artifact art) {
-					cache.Add (dictionary_key, art);
-					return art;
-				}
+			foreach (var path in lock_file.PackageFolders) {
+				log.LogMessage ($"\"===== folder: {path.Path} =====");
+				artifacts.AddRange(CheckFilePath (path.Path, nuget));
+			}
 
-			return null;
+			log.LogMessage ($"===== Found {artifacts.Count ()} java libs in pack {dictionary_key} =====");
+			foreach (var art in artifacts) {
+				log.LogMessage ($"===== java lib: {art.Id} =====");
+				cache [dictionary_key] = art;
+			}
+
+			return artifacts;
 		}
 
-		Artifact? CheckFilePath (string nugetPackagePath, LockFileLibrary package)
+		IEnumerable<Artifact> CheckFilePath (string nugetPackagePath, LockFileLibrary package)
 		{
 			// Check NuGet tags
 			var nuspec = package.Files.FirstOrDefault (f => f.EndsWith (".nuspec", StringComparison.OrdinalIgnoreCase));
 
 			if (nuspec is null)
-				return null;
+				return Enumerable.Empty<Artifact> ();
 
 			nuspec = Path.Combine (nugetPackagePath, package.Path, nuspec);
 
 			if (!File.Exists (nuspec))
-				return null;
+				return Enumerable.Empty<Artifact> ();
 
 			var reader = new NuGet.Packaging.NuspecReader (nuspec);
-			var tags = reader.GetTags ();
+			// don't assume only one native artifact tagged...
+			var tags = reader.GetTags ().Split(' ');
 
-			// Try the first tag format
-			var match = tag.Match (tags);
+			return tags.Select (_ => {
 
-			// Try the second tag format
-			if (!match.Success)
-				match = tag2.Match (tags);
+				// Try the first tag format
+				var match = tag.Match (_);
 
-			if (!match.Success)
-				return null;
+				// Try the second tag format
+				if (!match.Success)
+					match = tag2.Match (_);
 
-			// TODO: Define a well-known file that can be included in the package like "java-package.txt"
+				if (!match.Success)
+					return null;
 
-			return new Artifact (match.Groups ["ArtifactId"].Value, match.Groups ["GroupId"].Value, match.Groups ["Version"].Value);
+				// TODO: Define a well-known file that can be included in the package like "java-package.txt"
+
+				return new Artifact (match.Groups ["ArtifactId"].Value, match.Groups ["GroupId"].Value, match.Groups ["Version"].Value);
+			})
+			// filter out any null items (metadata tags that don't match our regex).
+			.Where (_ => _ != null)
+			.Cast<Artifact>();
 		}
 	}
 }
